@@ -1,4 +1,5 @@
 [ca]
 cacert = /path/to/cacert.pem
 cakey = /path/to/private/cakey.pem
+intermediates = /path/to/otherstuff.pem
 passphrase = MYSUPERSECRETPASSWORD
