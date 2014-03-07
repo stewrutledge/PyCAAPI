@@ -4,7 +4,7 @@ from bottle import route, run, request, response
 from sqlite3 import connect as sqconnect
 from OpenSSL import crypto
 from datetime import datetime
-from ConfigParser import ConfigParser
+from ConfigParser import ConfigParser, NoOptionError
 
 
 config = ConfigParser()
@@ -15,6 +15,16 @@ conn = sqconnect('./ca.db')
 caCertfile = config.get('ca', 'cacert')
 caKeyfile = config.get('ca', 'cakey')
 caKeypass = config.get('ca', 'passphrase')
+try:
+    caIntermediate = crypto.dump_certificate(
+        crypto.FILETYPE_PEM,
+        crypto.load_certificate(
+            crypto.FILETYPE_PEM,
+            open(config.get('ca', 'intermediates')).read()
+            )
+        )
+except NoOptionError:
+    caIntermediate = ""
 
 
 def _create_db():
@@ -56,7 +66,8 @@ def upload_ca():
     else:
         serial = serialResp[0] + 1
     cert = crypto.X509()
-    csr = crypto.load_certificate_request(crypto.FILETYPE_PEM, request.body.read())
+    csr = crypto.load_certificate_request(crypto.FILETYPE_PEM,
+                                          request.body.read())
     cert.gmtime_adj_notAfter(365*24*60*60)
     cert.gmtime_adj_notBefore(0)
     cert.set_pubkey(csr.get_pubkey())
@@ -64,16 +75,27 @@ def upload_ca():
     cert.set_issuer(caCert.get_subject())
     cert.set_serial_number(serial)
     extensions = csr.get_extensions()
-    extensions.append(crypto.X509Extension("crlDistributionPoints", False, "URI:http://localhost:8080/getcrl"))
+    notCA = crypto.X509Extension("basicConstraints", True, "CA:FALSE")
+    if not (
+            (notCA.get_short_name(), notCA.get_data())
+            in
+            [(e.get_short_name(), e.get_data()) for e in csr.get_extensions()]
+            ):
+        extensions.append(notCA)
+    extensions.append(crypto.X509Extension(
+        "crlDistributionPoints",
+        False,
+        "URI:http://localhost:8080/getcrl")
+        )
     cert.add_extensions(extensions)
     cert.sign(caKey, 'sha256')
     signedCert = crypto.dump_certificate(crypto.FILETYPE_PEM, cert)
     rawCSR = crypto.dump_certificate_request(crypto.FILETYPE_PEM, csr)
     commonName = csr.get_subject().CN
     cur = conn.cursor()
-    cur.execute("SELECT * FROM certs WHERE domain = ? AND revoked = 0", (commonName, ))
+    cur.execute("SELECT * FROM certs WHERE domain = ? AND revoked = 0",
+               (commonName, ))
     resp = cur.fetchone()
-    print resp
     if resp is not None:
         return("This cert seems to already exist!\n")
         cur.close()
@@ -89,6 +111,7 @@ def upload_ca():
     conn.commit()
     cur.close()
     response.status = 202
+    response.content_type = 'application/x-pem-file'
     return signedCert
 
 
@@ -103,17 +126,18 @@ def revoke():
         crl = crypto.CRL()
     else:
         crl = crypto.load_crl(crypto.FILETYPE_PEM, crlresp[0])
-    cur.execute("SELECT ROWID, serial FROM certs WHERE domain = ? and revoked = 0", commonName)
+    cur.execute("""SELECT ROWID, serial
+                FROM certs WHERE domain = ? and revoked = 0""", commonName)
     resp = cur.fetchone()
     if resp is None:
         return("Cannot find cert in database \n")
     row_id = (resp[0], )
     serial = resp[1]
     revoked.set_serial(hex(serial).replace('0x', ''))
-    revoked.set_rev_date(datetime.now().strftime('%Y%m%d%H%M%SZ'))
+    revoked.set_rev_date(datetime.utcnow().strftime('%Y%m%d%H%M%SZ'))
     revoked.set_reason('unspecified')
     crl.add_revoked(revoked)
-    crl_out = (crl.export(crypto.FILETYPE_ANS1, caCert, caKey), )
+    crl_out = (crl.export(caCert, caKey), )
     if crlresp is None:
         cur.execute('INSERT INTO crl VALUES(?)', crl_out)
     else:
@@ -121,7 +145,14 @@ def revoke():
     cur.execute("UPDATE certs SET revoked=1 WHERE ROWID = ?", row_id)
     conn.commit()
     cur.close()
-    return("Certificate revoked")
+    return("Certificate revoked\n")
+
+
+@route('/getca')
+def get_ca():
+    response.content_type = 'application/x-x509-ca-cert'
+    return(crypto.dump_certificate(crypto.FILETYPE_PEM, caCert),
+           caIntermediate)
 
 
 @route('/getcrl')
@@ -134,6 +165,8 @@ def get_crl():
     else:
         crl = crypto.load_crl(crypto.FILETYPE_PEM, resp[0])
         response.content_type = 'application/pkix-crl'
+        if request.params.get('format') == 'pem':
+            return crl.export(caCert, caKey)
         return crl.export(caCert, caKey, crypto.FILETYPE_ASN1)
 
 
