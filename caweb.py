@@ -21,27 +21,32 @@ try:
         crypto.load_certificate(
             crypto.FILETYPE_PEM,
             open(config.get('ca', 'intermediates')).read()
-            )
         )
+    )
 except NoOptionError:
     caIntermediate = ""
 
 
 def _create_db():
     cur = conn.cursor()
-    cur.execute('''CREATE TABLE
-            certs(
-            domain TEXT,
-            csr TEXT,
-            cert TEXT,
-            date TEXT,
-            serial TEST,
-            revoked INT)
-            ''')
-    cur.execute('''
-            CREATE TABLE crl(
-            crl TEXT)
-            ''')
+    cur.execute(
+        '''
+        CREATE TABLE
+        certs(
+        domain TEXT,
+        csr TEXT,
+        cert TEXT,
+        date TEXT,
+        serial TEST,
+        revoked INT)
+        '''
+    )
+    cur.execute(
+        '''
+        CREATE TABLE crl(
+        crl TEXT)
+        '''
+    )
     conn.commit()
     cur.close()
 
@@ -82,11 +87,13 @@ def upload_ca():
             [(e.get_short_name(), e.get_data()) for e in csr.get_extensions()]
             ):
         extensions.append(notCA)
-    extensions.append(crypto.X509Extension(
-        "crlDistributionPoints",
-        False,
-        "URI:http://localhost:8080/getcrl")
+    extensions.append(
+        crypto.X509Extension(
+            "crlDistributionPoints",
+            False,
+            "URI:http://localhost:8080/getcrl"
         )
+    )
     cert.add_extensions(extensions)
     cert.sign(caKey, 'sha256')
     signedCert = crypto.dump_certificate(crypto.FILETYPE_PEM, cert)
@@ -100,14 +107,16 @@ def upload_ca():
         return("This cert seems to already exist!\n")
         cur.close()
     cur = conn.cursor()
-    cur.execute("INSERT INTO certs VALUES(?, ?, ?, ?, ?, ?)", (
-        commonName,
-        rawCSR,
-        signedCert,
-        str(datetime.now()),
-        serial,
-        0)
+    cur.execute(
+        "INSERT INTO certs VALUES(?, ?, ?, ?, ?, ?)", (
+            commonName,
+            rawCSR,
+            signedCert,
+            str(datetime.now()),
+            serial,
+            0
         )
+    )
     conn.commit()
     cur.close()
     response.status = 202
@@ -151,8 +160,10 @@ def revoke():
 @route('/getca')
 def get_ca():
     response.content_type = 'application/x-x509-ca-cert'
-    return(crypto.dump_certificate(crypto.FILETYPE_PEM, caCert),
-           caIntermediate)
+    return(
+        crypto.dump_certificate(crypto.FILETYPE_PEM, caCert),
+        caIntermediate
+    )
 
 
 @route('/getcrl')
@@ -180,11 +191,15 @@ def list_certs():
     certs = []
     if resp is not None:
         for cn in resp:
-            certs.append({'cert': {
-                'cn': cn[0],
-                'serial': cn[2],
-                'date': cn[1]
-                }})
+            certs.append(
+                {
+                    'cert': {
+                        'cn': cn[0],
+                        'serial': cn[2],
+                        'date': cn[1]
+                    }
+                }
+            )
     return {'certs': certs}
 
 
