@@ -63,6 +63,9 @@ def upload_ca():
     cert.set_subject(csr.get_subject())
     cert.set_issuer(caCert.get_subject())
     cert.set_serial_number(serial)
+    extensions = csr.get_extensions()
+    extensions.append(crypto.X509Extension("crlDistributionPoints", False, "URI:http://localhost:8080/getcrl"))
+    cert.add_extensions(extensions)
     cert.sign(caKey, 'sha256')
     signedCert = crypto.dump_certificate(crypto.FILETYPE_PEM, cert)
     rawCSR = crypto.dump_certificate_request(crypto.FILETYPE_PEM, csr)
@@ -106,10 +109,11 @@ def revoke():
         return("Cannot find cert in database \n")
     row_id = (resp[0], )
     serial = resp[1]
-    revoked.set_serial(str(serial))
+    revoked.set_serial(hex(serial).replace('0x', ''))
     revoked.set_rev_date(datetime.now().strftime('%Y%m%d%H%M%SZ'))
+    revoked.set_reason('unspecified')
     crl.add_revoked(revoked)
-    crl_out = (crl.export(caCert, caKey), )
+    crl_out = (crl.export(crypto.FILETYPE_ANS1, caCert, caKey), )
     if crlresp is None:
         cur.execute('INSERT INTO crl VALUES(?)', crl_out)
     else:
@@ -118,6 +122,7 @@ def revoke():
     conn.commit()
     cur.close()
     return("Certificate revoked")
+
 
 @route('/getcrl')
 def get_crl():
@@ -128,7 +133,8 @@ def get_crl():
         return('No crl present')
     else:
         crl = crypto.load_crl(crypto.FILETYPE_PEM, resp[0])
-        return crl.export(caCert, caKey)
+        response.content_type = 'application/pkix-crl'
+        return crl.export(caCert, caKey, crypto.FILETYPE_ASN1)
 
 
 @route('/list')
