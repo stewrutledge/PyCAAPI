@@ -71,8 +71,10 @@ def upload_ca():
     else:
         serial = serialResp[0] + 1
     cert = crypto.X509()
-    csr = crypto.load_certificate_request(crypto.FILETYPE_PEM,
-                                          request.body.read())
+    csr = crypto.load_certificate_request(
+        crypto.FILETYPE_PEM,
+        request.body.read()
+    )
     cert.gmtime_adj_notAfter(365*24*60*60)
     cert.gmtime_adj_notBefore(0)
     cert.set_pubkey(csr.get_pubkey())
@@ -159,11 +161,32 @@ def revoke():
 
 @route('/getca')
 def get_ca():
-    response.content_type = 'application/x-x509-ca-cert'
+    if request.params.get('text') == 'true':
+        response.content_type = 'text/plain'
+    else:
+        response.content_type = 'application/x-x509-ca-cert'
     return(
         crypto.dump_certificate(crypto.FILETYPE_PEM, caCert),
-        caIntermediate
+        caIntermediate,
     )
+
+
+@route('/gencrl')
+def gen_crl():
+    cur = conn.cursor()
+    cur.execute('SELECT crl from crl')
+    crlresp = cur.fetchone()
+    if crlresp is None:
+        crl = crypto.CRL()
+        crl_out = (crl.export(caCert, caKey), )
+    else:
+        return("CRL already exists")
+    if crlresp is None:
+        cur.execute('INSERT INTO crl VALUES(?)', crl_out)
+        conn.commit()
+        cur.close()
+        response.content_type = 'text/plain'
+        return(crl_out)
 
 
 @route('/getcrl')
@@ -172,11 +195,12 @@ def get_crl():
     cur.execute('SELECT crl from crl where ROWID = 1')
     resp = cur.fetchone()
     if resp is None:
-        return('No crl present')
+        return('No crl present, you must first generate one!\n')
     else:
         crl = crypto.load_crl(crypto.FILETYPE_PEM, resp[0])
         response.content_type = 'application/pkix-crl'
         if request.params.get('format') == 'pem':
+            response.content_type = 'text/plain'
             return crl.export(caCert, caKey)
         return crl.export(caCert, caKey, crypto.FILETYPE_ASN1)
 
